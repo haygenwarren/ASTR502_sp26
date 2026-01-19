@@ -26,6 +26,7 @@ plt.xlabel('log(T_eff) (K)')
 plt.ylabel('log(L / L_sun)')
 plt.legend()
 plt.tight_layout()
+plt.savefig('gyrisochrones.png')
 plt.show()
 
 #plot two isochrones, at Fe/H=0.0 and -0.5
@@ -47,6 +48,7 @@ plt.xlabel('log(T_eff) (K)')
 plt.ylabel('log(L / L_sun)')
 plt.legend()
 plt.tight_layout()
+plt.savefig('feh.png')
 plt.show()
 
 #create a plot with sliders to change age and metallicity of the isochrone
@@ -55,7 +57,7 @@ from matplotlib.widgets import Slider
 init_age_gyr = 1.0
 init_feh = 0.0
 
-fig, ax = plt.subplots(figsize=(6, 8))
+fig, ax = plt.subplots(figsize=(8, 8))
 plt.subplots_adjust(left=0.12, bottom=0.25)
 
 iso = mist.isochrone(age=np.log10(init_age_gyr * 1e9), feh=init_feh)
@@ -90,6 +92,7 @@ def update(val):
 
 age_slider.on_changed(update)
 feh_slider.on_changed(update)
+plt.savefig('sliderisochrones.png')
 plt.show()
 
 matplotlib.interactive(True)
