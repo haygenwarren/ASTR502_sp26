@@ -2,7 +2,7 @@ import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 from isochrones.mist import MIST_Isochrone
 
-_BANDS = ("V", "G", "J", "K")
+_BANDS = ("G", "BP", "RP", "J", "H", "K")
 _INTERPOLATORS = None
 _GRIDS = None
 
@@ -77,7 +77,7 @@ def _get_interpolators():
 
 
 def get_model_mag(mass, age, feh):
-    """Return interpolated V, G, J, K magnitudes for given mass, age, [Fe/H].
+    """Return interpolated Gaia and NIR magnitudes for given mass, age, [Fe/H].
 
     Args:
         mass: Stellar mass in solar masses.
@@ -85,7 +85,7 @@ def get_model_mag(mass, age, feh):
         feh: Metallicity [Fe/H].
 
     Returns:
-        Tuple of (V, G, J, K) magnitudes. Scalars for scalar inputs, arrays otherwise.
+        Tuple of (G, BP, RP, J, H, K) magnitudes. Scalars for scalar inputs, arrays otherwise.
     """
     interpolators, _ = _get_interpolators()
 
@@ -104,10 +104,19 @@ def get_model_mag(mass, age, feh):
 
     if mass_arr.shape == ():
         return (
-            outputs["V"].item(),
             outputs["G"].item(),
+            outputs["BP"].item(),
+            outputs["RP"].item(),
             outputs["J"].item(),
+            outputs["H"].item(),
             outputs["K"].item(),
         )
 
-    return outputs["V"], outputs["G"], outputs["J"], outputs["K"]
+    return (
+        outputs["G"],
+        outputs["BP"],
+        outputs["RP"],
+        outputs["J"],
+        outputs["H"],
+        outputs["K"],
+    )
