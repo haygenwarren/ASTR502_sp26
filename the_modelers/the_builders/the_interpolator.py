@@ -2,7 +2,16 @@ import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 from isochrones.mist import MIST_Isochrone
 
-_BANDS = ("V", "G", "J", "K")
+_BANDS = ("G", "BP", "RP", "J", "H", "K")
+
+_BAND_COLUMNS = {
+    "G": "G_mag",
+    "BP": "BP_mag",
+    "RP": "RP_mag",
+    "J": "J_mag",
+    "H": "H_mag",
+    "K": "K_mag",
+}
 _INTERPOLATORS = None
 _GRIDS = None
 
@@ -32,8 +41,9 @@ def _build_interpolators(
             mass_maxs.append(np.nanmax(masses))
             isochrones[(age, feh)] = iso
 
-    mass_min = max(mass_mins)
-    mass_max = min(mass_maxs)
+    mass_min = min(mass_mins)
+    mass_max = max(mass_maxs)
+    mass_grid = np.linspace(mass_min, mass_max, mass_points)
     if mass_min >= mass_max:
         raise ValueError("No overlapping mass range across the requested age/feh grid.")
 
@@ -51,10 +61,15 @@ def _build_interpolators(
             sort_idx = np.argsort(masses)
             masses_sorted = masses[sort_idx]
             for band in _BANDS:
-                values = iso[band].to_numpy()[sort_idx]
-                magnitude_grids[band][:, age_index, feh_index] = np.interp(
-                    mass_grid, masses_sorted, values
+                values = iso[_BAND_COLUMNS[band]].to_numpy()[sort_idx]
+                vals = np.interp(
+                    mass_grid,
+                    masses_sorted,
+                    values,
+                    left=np.nan,
+                    right=np.nan,
                 )
+                magnitude_grids[band][:, age_index, feh_index] = vals
 
     interpolators = {
         band: RegularGridInterpolator(
@@ -65,6 +80,9 @@ def _build_interpolators(
         )
         for band in _BANDS
     }
+    print("mass range:", mass_grid[0], mass_grid[-1])
+    print("age range:", age_grid[0], age_grid[-1])
+    print("feh range:", feh_grid[0], feh_grid[-1])
 
     return interpolators, (mass_grid, age_grid, feh_grid)
 
@@ -77,7 +95,7 @@ def _get_interpolators():
 
 
 def get_model_mag(mass, age, feh):
-    """Return interpolated V, G, J, K magnitudes for given mass, age, [Fe/H].
+    """Return interpolated Gaia and NIR magnitudes for given mass, age, [Fe/H].
 
     Args:
         mass: Stellar mass in solar masses.
@@ -85,7 +103,7 @@ def get_model_mag(mass, age, feh):
         feh: Metallicity [Fe/H].
 
     Returns:
-        Tuple of (V, G, J, K) magnitudes. Scalars for scalar inputs, arrays otherwise.
+        Tuple of (G, BP, RP, J, H, K) magnitudes. Scalars for scalar inputs, arrays otherwise.
     """
     interpolators, _ = _get_interpolators()
 
@@ -104,10 +122,22 @@ def get_model_mag(mass, age, feh):
 
     if mass_arr.shape == ():
         return (
-            outputs["V"].item(),
             outputs["G"].item(),
+            outputs["BP"].item(),
+            outputs["RP"].item(),
             outputs["J"].item(),
+            outputs["H"].item(),
             outputs["K"].item(),
         )
 
-    return outputs["V"], outputs["G"], outputs["J"], outputs["K"]
+    return (
+        outputs["G"],
+        outputs["BP"],
+        outputs["RP"],
+        outputs["J"],
+        outputs["H"],
+        outputs["K"],
+    )
+
+G, BP, RP, J, H, K = get_model_mag(1.0, 1e9, 0.0)
+print(G, BP, RP, J, H, K)
