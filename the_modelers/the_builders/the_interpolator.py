@@ -146,3 +146,78 @@ for k in sorted(mags.keys()):
 print("\n")
 
 
+
+# Likelihood calculator
+
+def _validate_observations(observed_mags, observed_errs):
+    if observed_mags is None or observed_errs is None:
+        raise ValueError("Both observed_mags and observed_errs are required.")
+
+    bands = sorted(set(observed_mags) & set(observed_errs))
+    if not bands:
+        raise ValueError("No overlapping bands between observed_mags and observed_errs.")
+
+    for band in bands:
+        err = observed_errs[band]
+        if err is None or err <= 0:
+            raise ValueError(f"Non-positive error for band '{band}'.")
+
+    return bands
+
+
+def brute_force_likelihood(observed_mags, observed_errs):
+    """
+    Compute a brute-force likelihood over the model grid and return the best-fit parameters.
+
+    Parameters
+    ----------
+    observed_mags : dict
+        Observed magnitudes keyed by band name.
+    observed_errs : dict
+        Observed 1-sigma uncertainties keyed by band name.
+
+    Returns
+    -------
+    dict with best-fit mass, age, feh, and log_likelihood.
+    """
+    interpolators, grids = _get_interpolators()
+    mass_grid, age_grid, feh_grid = grids
+
+    bands = _validate_observations(observed_mags, observed_errs)
+    bands = [b for b in bands if b in interpolators]
+    if not bands:
+        raise ValueError("None of the observed bands are available in the interpolator grid.")
+
+    m_grid, a_grid, f_grid = np.meshgrid(mass_grid, age_grid, feh_grid, indexing="ij")
+    points = np.column_stack([m_grid.ravel(), a_grid.ravel(), f_grid.ravel()])
+
+    chi2 = np.zeros(points.shape[0])
+    valid = np.ones(points.shape[0], dtype=bool)
+
+    for band in bands:
+        model_mag = interpolators[band](points)
+        valid &= np.isfinite(model_mag)
+        resid = (observed_mags[band] - model_mag) / observed_errs[band]
+        chi2 += resid ** 2
+
+    chi2[~valid] = np.inf
+    log_likelihood = -0.5 * chi2
+
+    best_index = np.nanargmax(log_likelihood)
+    best_mass = points[best_index, 0]
+    best_age = points[best_index, 1]
+    best_feh = points[best_index, 2]
+
+    return {
+        "mass": float(best_mass),
+        "age": float(best_age),
+        "feh": float(best_feh),
+        "log_likelihood": float(log_likelihood[best_index]),
+    }
+
+
+# Example likelihood usage
+# observed_mags = {"G": 5.0, "BP": 5.3, "RP": 4.8}
+# observed_errs = {"G": 0.02, "BP": 0.03, "RP": 0.02}
+# best_fit = brute_force_likelihood(observed_mags, observed_errs)
+# print(best_fit)
