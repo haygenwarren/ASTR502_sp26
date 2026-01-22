@@ -3,7 +3,6 @@ from scipy.interpolate import RegularGridInterpolator
 from isochrones import get_ichrone
 from isochrones.mist import MIST_Isochrone
 
-# What you WANT to support
 _REQUESTED_BANDS = ("G", "BP", "RP", "J", "H", "K", "W1", "W2", "W3", "W4", "g", "r", "i", "z")
 
 _BAND_COLUMNS = {
@@ -143,11 +142,9 @@ mags = get_model_mag(1.0, 1e9, 0.0)
 for k in sorted(mags.keys()):
     print(f"{k}: {mags[k]}")
 
+
 print("\n")
 
-
-
-# Likelihood calculator
 
 def _validate_observations(observed_mags, observed_errs):
     if observed_mags is None or observed_errs is None:
@@ -166,20 +163,6 @@ def _validate_observations(observed_mags, observed_errs):
 
 
 def brute_force_likelihood(observed_mags, observed_errs):
-    """
-    Compute a brute-force likelihood over the model grid and return the best-fit parameters.
-
-    Parameters
-    ----------
-    observed_mags : dict
-        Observed magnitudes keyed by band name.
-    observed_errs : dict
-        Observed 1-sigma uncertainties keyed by band name.
-
-    Returns
-    -------
-    dict with best-fit mass, age, feh, and log_likelihood.
-    """
     interpolators, grids = _get_interpolators()
     mass_grid, age_grid, feh_grid = grids
 
@@ -208,16 +191,12 @@ def brute_force_likelihood(observed_mags, observed_errs):
     best_age = points[best_index, 1]
     best_feh = points[best_index, 2]
 
-    return {
-        "mass": float(best_mass),
-        "age": float(best_age),
-        "feh": float(best_feh),
-        "log_likelihood": float(log_likelihood[best_index]),
-    }
-
+    return best_mass, best_age, best_feh
 
 # Example likelihood usage
-# observed_mags = {"G": 5.0, "BP": 5.3, "RP": 4.8}
-# observed_errs = {"G": 0.02, "BP": 0.03, "RP": 0.02}
-# best_fit = brute_force_likelihood(observed_mags, observed_errs)
-# print(best_fit)
+observed_mags = {"G": 5.0, "BP": 5.3, "RP": 4.8}
+observed_errs = {"G": 0.02, "BP": 0.03, "RP": 0.02}
+mass, age, feh= brute_force_likelihood(observed_mags, observed_errs)
+print("mass:", mass)
+print("age:", age)
+print("feh:", feh)
