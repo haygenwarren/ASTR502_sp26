@@ -1,8 +1,10 @@
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
+from isochrones import get_ichrone
 from isochrones.mist import MIST_Isochrone
 
-_BANDS = ("G", "BP", "RP", "J", "H", "K")
+# What you WANT to support
+_REQUESTED_BANDS = ("G", "BP", "RP", "J", "H", "K", "W1", "W2", "W3", "W4", "g", "r", "i", "z")
 
 _BAND_COLUMNS = {
     "G": "G_mag",
@@ -11,17 +13,25 @@ _BAND_COLUMNS = {
     "J": "J_mag",
     "H": "H_mag",
     "K": "K_mag",
+    "W1": "W1_mag",
+    "W2": "W2_mag",
+    "W3": "W3_mag",
+    "W4": "W4_mag",
+    "g": "g_mag",
+    "r": "r_mag",
+    "i": "i_mag",
+    "z": "z_mag",
 }
+
 _INTERPOLATORS = None
 _GRIDS = None
+_ACTIVE_BANDS = None
 
 
-def _build_interpolators(
-    age_grid=None,
-    feh_grid=None,
-    mass_points=200,
-):
-    mist = MIST_Isochrone()
+def _build_interpolators(age_grid=None, feh_grid=None, mass_points=200):
+    global _ACTIVE_BANDS
+
+    mist = get_ichrone("mist", bands=list(_REQUESTED_BANDS))
     mist.initialize()
 
     if age_grid is None:
@@ -33,6 +43,16 @@ def _build_interpolators(
     mass_mins = []
     mass_maxs = []
 
+    iso0 = mist.isochrone(age=np.log10(age_grid[0]), feh=feh_grid[0])
+    available_cols = set(iso0.columns)
+
+    _ACTIVE_BANDS = [b for b in _REQUESTED_BANDS if _BAND_COLUMNS.get(b) in available_cols]
+
+    # missing = [b for b in _REQUESTED_BANDS if b not in _ACTIVE_BANDS]
+    # print("Active bands:", _ACTIVE_BANDS)
+    # if missing:
+    #     print("Skipping missing bands (no column found):", missing)
+
     for age in age_grid:
         for feh in feh_grid:
             iso = mist.isochrone(age=np.log10(age), feh=feh)
@@ -43,15 +63,14 @@ def _build_interpolators(
 
     mass_min = min(mass_mins)
     mass_max = max(mass_maxs)
-    mass_grid = np.linspace(mass_min, mass_max, mass_points)
     if mass_min >= mass_max:
-        raise ValueError("No overlapping mass range across the requested age/feh grid.")
+        raise ValueError("No mass range available across the requested age/feh grid.")
 
     mass_grid = np.linspace(mass_min, mass_max, mass_points)
 
     magnitude_grids = {
         band: np.empty((mass_grid.size, age_grid.size, feh_grid.size))
-        for band in _BANDS
+        for band in _ACTIVE_BANDS
     }
 
     for age_index, age in enumerate(age_grid):
@@ -60,8 +79,12 @@ def _build_interpolators(
             masses = iso["mass"].to_numpy()
             sort_idx = np.argsort(masses)
             masses_sorted = masses[sort_idx]
-            for band in _BANDS:
-                values = iso[_BAND_COLUMNS[band]].to_numpy()[sort_idx]
+
+            for band in _ACTIVE_BANDS:
+                col = _BAND_COLUMNS[band]
+                values = iso[col].to_numpy()[sort_idx]
+
+                # avoid extrapolation beyond that slice’s mass coverage
                 vals = np.interp(
                     mass_grid,
                     masses_sorted,
@@ -78,11 +101,12 @@ def _build_interpolators(
             bounds_error=False,
             fill_value=np.nan,
         )
-        for band in _BANDS
+        for band in _ACTIVE_BANDS
     }
-    print("mass range:", mass_grid[0], mass_grid[-1])
-    print("age range:", age_grid[0], age_grid[-1])
-    print("feh range:", feh_grid[0], feh_grid[-1])
+
+    # print("mass range:", mass_grid[0], mass_grid[-1])
+    # print("age range:", age_grid[0], age_grid[-1])
+    # print("feh range:", feh_grid[0], feh_grid[-1])
 
     return interpolators, (mass_grid, age_grid, feh_grid)
 
@@ -95,16 +119,6 @@ def _get_interpolators():
 
 
 def get_model_mag(mass, age, feh):
-    """Return interpolated Gaia and NIR magnitudes for given mass, age, [Fe/H].
-
-    Args:
-        mass: Stellar mass in solar masses.
-        age: Stellar age in years.
-        feh: Metallicity [Fe/H].
-
-    Returns:
-        Tuple of (G, BP, RP, J, H, K) magnitudes. Scalars for scalar inputs, arrays otherwise.
-    """
     interpolators, _ = _get_interpolators()
 
     mass_arr = np.asarray(mass)
@@ -112,32 +126,23 @@ def get_model_mag(mass, age, feh):
     feh_arr = np.asarray(feh)
     mass_arr, age_arr, feh_arr = np.broadcast_arrays(mass_arr, age_arr, feh_arr)
 
-    points = np.column_stack(
-        [mass_arr.ravel(), age_arr.ravel(), feh_arr.ravel()]
-    )
+    points = np.column_stack([mass_arr.ravel(), age_arr.ravel(), feh_arr.ravel()])
 
     outputs = {}
-    for band in _BANDS:
-        outputs[band] = interpolators[band](points).reshape(mass_arr.shape)
+    for band, interp in interpolators.items():
+        outputs[band] = interp(points).reshape(mass_arr.shape)
+
 
     if mass_arr.shape == ():
-        return (
-            outputs["G"].item(),
-            outputs["BP"].item(),
-            outputs["RP"].item(),
-            outputs["J"].item(),
-            outputs["H"].item(),
-            outputs["K"].item(),
-        )
+        return {b: outputs[b].item() for b in outputs}
 
-    return (
-        outputs["G"],
-        outputs["BP"],
-        outputs["RP"],
-        outputs["J"],
-        outputs["H"],
-        outputs["K"],
-    )
+    return outputs
 
-G, BP, RP, J, H, K = get_model_mag(1.0, 1e9, 0.0)
-print(G, BP, RP, J, H, K)
+# Example usage
+mags = get_model_mag(1.0, 1e9, 0.0)
+for k in sorted(mags.keys()):
+    print(f"{k}: {mags[k]}")
+
+print("\n")
+
+
