@@ -137,14 +137,14 @@ def get_model_mag(mass, age, feh):
 
     return outputs
 
-# Example usage
-print("Results from interpolator and get_model_mag:")
-mags = get_model_mag(0.5, 1e9, 0.0)
-for k in sorted(mags.keys()):
-    print(f"{k}: {mags[k]}")
-
-print("--------------------------------")
-print("Results from brute-force likelihood calculator:")
+# # Example usage
+# print("Results from interpolator and get_model_mag:")
+# mags = get_model_mag(0.5, 1e9, 0.0)
+# for k in sorted(mags.keys()):
+#     print(f"{k}: {mags[k]}")
+#
+# print("--------------------------------")
+# print("Results from brute-force likelihood calculator:")
 
 def _validate_observations(observed_mags, observed_errs):
     if observed_mags is None or observed_errs is None:
@@ -193,10 +193,10 @@ def brute_force_likelihood(observed_mags, observed_errs):
 
     return best_mass, best_age, best_feh
 
-# Example likelihood usage
-observed_mags = {"G": 8.83, "BP": 9.79, "RP": 7.89}
-observed_errs = {"G": 0.02, "BP": 0.03, "RP": 0.02}
-mass, age, feh= brute_force_likelihood(observed_mags, observed_errs)
-print("mass:", mass)
-print("age:", age)
-print("feh:", feh)
+# # Example likelihood usage
+# observed_mags = {"G": 8.83, "BP": 9.79, "RP": 7.89}
+# observed_errs = {"G": 0.02, "BP": 0.03, "RP": 0.02}
+# mass, age, feh= brute_force_likelihood(observed_mags, observed_errs)
+# print("mass:", mass)
+# print("age:", age)
+# print("feh:", feh)
