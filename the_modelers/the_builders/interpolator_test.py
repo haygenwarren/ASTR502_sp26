@@ -1,7 +1,7 @@
 from the_interpolator import get_model_mag, brute_force_likelihood
 
 observed_mags = {"g": 10.74, "r": 9.13, "i": 7.95, "z": 6.9}
-observed_errs = {"f": 0.0040676, "r": 0.0037485, "i": 0.000602, "z": 0.0039562}
+observed_errs = {"g": 0.0040676, "r": 0.0037485, "i": 0.000602, "z": 0.0039562}
 
 mass, age, feh = brute_force_likelihood(observed_mags, observed_errs)
 print(f"Brute-force likelihood results: mass={mass}, age={age}, feh={feh}")

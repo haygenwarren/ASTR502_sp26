@@ -34,7 +34,7 @@ def _build_interpolators(age_grid=None, feh_grid=None, mass_points=200):
     mist.initialize()
 
     if age_grid is None:
-        age_grid = np.logspace(np.log10(1e8), np.log10(13e9), 16)
+        age_grid = np.logspace(np.log10(1e6), np.log10(13e9), 16)
     if feh_grid is None:
         feh_grid = np.linspace(-2.0, 0.5, 11)
 
@@ -139,7 +139,7 @@ def get_model_mag(mass, age, feh):
 
 # # Example usage
 # print("Results from interpolator and get_model_mag:")
-# mags = get_model_mag(0.5, 1e9, 0.0)
+# mags = get_model_mag(1.0, 4.6e9, 0.0122)
 # for k in sorted(mags.keys()):
 #     print(f"{k}: {mags[k]}")
 #
@@ -194,8 +194,8 @@ def brute_force_likelihood(observed_mags, observed_errs):
     return best_mass, best_age, best_feh
 
 # # Example likelihood usage
-# observed_mags = {"G": 8.83, "BP": 9.79, "RP": 7.89}
-# observed_errs = {"G": 0.02, "BP": 0.03, "RP": 0.02}
+# observed_mags = {"G": 4.67, "BP": 5.00, "RP": 4.21}
+# observed_errs = {"G": 0.02, "BP": 0.02, "RP": 0.02}
 # mass, age, feh= brute_force_likelihood(observed_mags, observed_errs)
 # print("mass:", mass)
 # print("age:", age)
