@@ -34,7 +34,7 @@ def _build_interpolators(age_grid=None, feh_grid=None, mass_points=200):
     mist.initialize()
 
     if age_grid is None:
-        age_grid = np.logspace(np.log10(1e8), np.log10(13e9), 16)
+        age_grid = np.logspace(np.log10(1e6), np.log10(13e9), 32)
     if feh_grid is None:
         feh_grid = np.linspace(-2.0, 0.5, 11)
 
@@ -66,6 +66,8 @@ def _build_interpolators(age_grid=None, feh_grid=None, mass_points=200):
         raise ValueError("No mass range available across the requested age/feh grid.")
 
     mass_grid = np.linspace(mass_min, mass_max, mass_points)
+    # after mass_grid is made
+    mass_grid = mass_grid[(mass_grid >= 0.05) & (mass_grid <= 2.0)]
 
     magnitude_grids = {
         band: np.empty((mass_grid.size, age_grid.size, feh_grid.size))
@@ -154,15 +156,19 @@ def _validate_observations(observed_mags, observed_errs):
     if not bands:
         raise ValueError("No overlapping bands between observed_mags and observed_errs.")
 
+    ERR_FLOOR = 0.02  # 0.02 mag systematic/model floor
     for band in bands:
         err = observed_errs[band]
         if err is None or err <= 0:
             raise ValueError(f"Non-positive error for band '{band}'.")
-
+        # Apply floor in quadrature
+        observed_errs[band] = np.hypot(err, ERR_FLOOR)
     return bands
 
 
 def brute_force_likelihood(observed_mags, observed_errs):
+    observed_errs = dict(observed_errs)  # copy
+    bands = _validate_observations(observed_mags, observed_errs)
     interpolators, grids = _get_interpolators()
     mass_grid, age_grid, feh_grid = grids
 
@@ -174,24 +180,43 @@ def brute_force_likelihood(observed_mags, observed_errs):
     m_grid, a_grid, f_grid = np.meshgrid(mass_grid, age_grid, feh_grid, indexing="ij")
     points = np.column_stack([m_grid.ravel(), a_grid.ravel(), f_grid.ravel()])
 
-    chi2 = np.zeros(points.shape[0])
-    valid = np.ones(points.shape[0], dtype=bool)
+    # after you build points, and inside the loop you currently do chi2 += ...
+    # instead, compute model mags for all bands first
+
+    model_stack = []
+    obs_stack = []
+    sig_stack = []
 
     for band in bands:
         model_mag = interpolators[band](points)
-        valid &= np.isfinite(model_mag)
-        resid = (observed_mags[band] - model_mag) / observed_errs[band]
-        chi2 += resid ** 2
+        model_stack.append(model_mag)
+        obs_stack.append(np.full_like(model_mag, observed_mags[band], dtype=float))
+        sig_stack.append(np.full_like(model_mag, observed_errs[band], dtype=float))
+
+    model_stack = np.vstack(model_stack)  # (nband, npts)
+    obs_stack = np.vstack(obs_stack)
+    sig_stack = np.vstack(sig_stack)
+
+    valid = np.all(np.isfinite(model_stack), axis=0) & np.all(sig_stack > 0, axis=0)
+
+    w = 1.0 / (sig_stack ** 2)
+
+    # best DM per point (shape: (npts,))
+    dm_hat = np.sum((obs_stack - model_stack) * w, axis=0) / np.sum(w, axis=0)
+
+    # chi2 per point
+    resid = (obs_stack - (model_stack + dm_hat)) / sig_stack
+    chi2 = np.sum(resid ** 2, axis=0)
 
     chi2[~valid] = np.inf
-    log_likelihood = -0.5 * chi2
+    best_index = np.argmin(chi2)
 
-    best_index = np.nanargmax(log_likelihood)
     best_mass = points[best_index, 0]
     best_age = points[best_index, 1]
     best_feh = points[best_index, 2]
+    best_dm = dm_hat[best_index]
 
-    return best_mass, best_age, best_feh
+    return best_mass, best_age, best_feh, best_dm
 
 # # Example likelihood usage
 # observed_mags = {"G": 8.83, "BP": 9.79, "RP": 7.89}
