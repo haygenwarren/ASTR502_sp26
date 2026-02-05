@@ -60,14 +60,14 @@ def _build_interpolators(age_grid=None, feh_grid=None, mass_points=200):
             mass_maxs.append(np.nanmax(masses))
             isochrones[(age, feh)] = iso
 
-    mass_min = min(mass_mins)
-    mass_max = max(mass_maxs)
+    mass_min = max(mass_mins)
+    mass_max = min(mass_maxs)
+    mass_min = max(mass_min, 0.05)
+    mass_max = min(mass_max, 2.0)
     if mass_min >= mass_max:
-        raise ValueError("No mass range available across the requested age/feh grid.")
+        raise ValueError("No overlapping mass range available across the requested age/feh grid.")
 
     mass_grid = np.linspace(mass_min, mass_max, mass_points)
-    # after mass_grid is made
-    mass_grid = mass_grid[(mass_grid >= 0.05) & (mass_grid <= 2.0)]
 
     magnitude_grids = {
         band: np.empty((mass_grid.size, age_grid.size, feh_grid.size))
