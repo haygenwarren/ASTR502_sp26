@@ -96,10 +96,6 @@ HOSTNAME_FOR_TESTING = None
 # mass, age, feh, dm = brute_force_likelihood(observed_mags, observed_errs)
 # print(f"Brute-force likelihood results: mass={mass}, age={age}, feh={feh}")
 
-mass = 0.56
-age = 9300000
-feh = 0.0
-
 distance_pc = None
 hostname_absolute_mags = None
 
