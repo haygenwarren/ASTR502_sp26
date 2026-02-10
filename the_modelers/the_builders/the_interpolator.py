@@ -201,22 +201,7 @@ def brute_force_likelihood(observed_mags, observed_errs):
 
     w = 1.0 / (sig_stack ** 2)
 
-    # best DM per point (shape: (npts,))
-    dm_hat = np.sum((obs_stack - model_stack) * w, axis=0) / np.sum(w, axis=0)
-
-    # chi2 per point
-    resid = (obs_stack - (model_stack + dm_hat)) / sig_stack
-    chi2 = np.sum(resid ** 2, axis=0)
-
-    chi2[~valid] = np.inf
-    best_index = np.argmin(chi2)
-
-    best_mass = points[best_index, 0]
-    best_age = points[best_index, 1]
-    best_feh = points[best_index, 2]
-    best_dm = dm_hat[best_index]
-
-    return best_mass, best_age, best_feh, best_dm
+    return best_mass, best_age, best_feh
 
 # # Example likelihood usage
 # observed_mags = {"G": 8.83, "BP": 9.79, "RP": 7.89}
