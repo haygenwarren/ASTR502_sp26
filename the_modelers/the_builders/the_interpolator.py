@@ -34,9 +34,9 @@ def _build_interpolators(age_grid=None, feh_grid=None, mass_points=200):
     mist.initialize()
 
     if age_grid is None:
-        age_grid = np.logspace(np.log10(1e6), np.log10(13e9), 32)
+        age_grid = np.logspace(np.log10(1e8), np.log10(13e9), 32)  # 0.1–13 Gyr
     if feh_grid is None:
-        feh_grid = np.linspace(-2.0, 0.5, 11)
+        feh_grid = np.linspace(-0.5, 0.5, 21)
 
     isochrones = {}
     mass_mins = []
@@ -60,13 +60,8 @@ def _build_interpolators(age_grid=None, feh_grid=None, mass_points=200):
             mass_maxs.append(np.nanmax(masses))
             isochrones[(age, feh)] = iso
 
-    mass_min = max(mass_mins)
-    mass_max = min(mass_maxs)
-    mass_min = max(mass_min, 0.05)
-    mass_max = min(mass_max, 2.0)
-    if mass_min >= mass_max:
-        raise ValueError("No overlapping mass range available across the requested age/feh grid.")
-
+    mass_min = 0.05
+    mass_max = 2.0
     mass_grid = np.linspace(mass_min, mass_max, mass_points)
 
     magnitude_grids = {
