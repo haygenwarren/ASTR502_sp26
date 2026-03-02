@@ -1,94 +1,137 @@
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 from isochrones import get_ichrone
-from isochrones.mist import MIST_Isochrone
 
 _REQUESTED_BANDS = ("G", "BP", "RP", "J", "H", "K", "W1", "W2", "W3", "W4", "g", "r", "i", "z")
 
 _BAND_COLUMNS = {
-    "G": "G_mag",
-    "BP": "BP_mag",
-    "RP": "RP_mag",
-    "J": "J_mag",
-    "H": "H_mag",
-    "K": "K_mag",
-    "W1": "W1_mag",
-    "W2": "W2_mag",
-    "W3": "W3_mag",
-    "W4": "W4_mag",
-    "g": "g_mag",
-    "r": "r_mag",
-    "i": "i_mag",
-    "z": "z_mag",
+    "G": "G_mag", "BP": "BP_mag", "RP": "RP_mag",
+    "J": "J_mag", "H": "H_mag", "K": "K_mag",
+    "W1": "W1_mag", "W2": "W2_mag", "W3": "W3_mag", "W4": "W4_mag",
+    "g": "g_mag", "r": "r_mag", "i": "i_mag", "z": "z_mag",
 }
 
+_MIST = None
 _INTERPOLATORS = None
 _GRIDS = None
 _ACTIVE_BANDS = None
 
 
-def _build_interpolators(age_grid=None, feh_grid=None, mass_points=200):
+def _get_mist():
+    global _MIST
+    if _MIST is None:
+        _MIST = get_ichrone("mist", bands=list(_REQUESTED_BANDS))
+        _MIST.initialize()
+    return _MIST
+
+
+def _select_rows(iso):
+    """
+    Keep pre-MS (phase=-1), MS (phase=0), and early subgiant (phase=2)
+    rows, truncated at the first point where mass turns over.
+    """
+    selected = iso[iso["phase"].isin([-1, 0, 2])].copy()
+    selected = selected.sort_values("eep").reset_index(drop=True)
+    masses = selected["mass"].to_numpy()
+    cutoff = len(masses)
+    for i in range(1, len(masses)):
+        if masses[i] < masses[i - 1]:
+            cutoff = i
+            break
+    return selected.iloc[:cutoff]
+
+
+def _build_interpolators(age_grid=None, feh_grid=None, mass_points=300):
     global _ACTIVE_BANDS
 
-    mist = get_ichrone("mist", bands=list(_REQUESTED_BANDS))
-    mist.initialize()
+    mist = _get_mist()
 
     if age_grid is None:
-        age_grid = np.logspace(np.log10(1e8), np.log10(13e9), 32)  # 0.1–13 Gyr
+        age_grid = np.logspace(np.log10(1e6), np.log10(13.8e9), 60)
     if feh_grid is None:
-        feh_grid = np.linspace(-0.5, 0.5, 21)
+        feh_grid = np.linspace(-1.0, 0.5, 31)
 
-    isochrones = {}
-    mass_mins = []
-    mass_maxs = []
+    mass_grid = np.linspace(0.1, 3.0, mass_points)
 
-    iso0 = mist.isochrone(age=np.log10(age_grid[0]), feh=feh_grid[0])
+    # Discover which bands are actually available
+    iso0 = mist.isochrone(age=np.log10(age_grid[len(age_grid) // 2]), feh=0.0)
     available_cols = set(iso0.columns)
-
     _ACTIVE_BANDS = [b for b in _REQUESTED_BANDS if _BAND_COLUMNS.get(b) in available_cols]
 
-    # missing = [b for b in _REQUESTED_BANDS if b not in _ACTIVE_BANDS]
-    # print("Active bands:", _ACTIVE_BANDS)
-    # if missing:
-    #     print("Skipping missing bands (no column found):", missing)
-
-    for age in age_grid:
-        for feh in feh_grid:
-            iso = mist.isochrone(age=np.log10(age), feh=feh)
-            masses = iso["mass"].to_numpy()
-            mass_mins.append(np.nanmin(masses))
-            mass_maxs.append(np.nanmax(masses))
-            isochrones[(age, feh)] = iso
-
-    mass_min = 0.05
-    mass_max = 2.0
-    mass_grid = np.linspace(mass_min, mass_max, mass_points)
-
     magnitude_grids = {
-        band: np.empty((mass_grid.size, age_grid.size, feh_grid.size))
+        band: np.full((mass_grid.size, age_grid.size, feh_grid.size), np.nan)
         for band in _ACTIVE_BANDS
     }
 
     for age_index, age in enumerate(age_grid):
         for feh_index, feh in enumerate(feh_grid):
-            iso = isochrones[(age, feh)]
-            masses = iso["mass"].to_numpy()
+            try:
+                iso = mist.isochrone(age=np.log10(age), feh=feh)
+            except Exception:
+                continue
+
+            selected = _select_rows(iso)
+            if len(selected) < 2:
+                continue
+
+            masses = selected["mass"].to_numpy()
             sort_idx = np.argsort(masses)
             masses_sorted = masses[sort_idx]
+            _, unique_idx = np.unique(masses_sorted, return_index=True)
+            masses_sorted = masses_sorted[unique_idx]
 
             for band in _ACTIVE_BANDS:
                 col = _BAND_COLUMNS[band]
-                values = iso[col].to_numpy()[sort_idx]
+                if col not in selected.columns:
+                    continue
 
-                # avoid extrapolation beyond that slice’s mass coverage
-                vals = np.interp(
-                    mass_grid,
-                    masses_sorted,
-                    values,
-                    left=np.nan,
-                    right=np.nan,
+                values = selected[col].to_numpy()[sort_idx][unique_idx]
+
+                # Interpolate all mass grid points at once
+                in_range = (
+                    (mass_grid >= masses_sorted[0]) &
+                    (mass_grid <= masses_sorted[-1])
                 )
-                magnitude_grids[band][:, age_index, feh_index] = vals
+                extrap_mask = (
+                    (mass_grid > masses_sorted[-1]) &
+                    (mass_grid <= masses_sorted[-1] + 0.1)
+                )
+
+                if np.any(in_range):
+                    magnitude_grids[band][in_range, age_index, feh_index] = np.interp(
+                        mass_grid[in_range], masses_sorted, values
+                    )
+
+                if np.any(extrap_mask):
+                    dm = masses_sorted[-1] - masses_sorted[-2]
+                    dv = values[-1] - values[-2]
+                    slope = dv / dm if dm != 0 else 0.0
+                    magnitude_grids[band][extrap_mask, age_index, feh_index] = (
+                        values[-1] + slope * (mass_grid[extrap_mask] - masses_sorted[-1])
+                    )
+
+    # Fill interior NaN gaps along the mass axis only
+    for band in _ACTIVE_BANDS:
+        grid = magnitude_grids[band]
+        for age_index in range(len(age_grid)):
+            for feh_index in range(len(feh_grid)):
+                col_vals = grid[:, age_index, feh_index]
+                valid = np.isfinite(col_vals)
+                if valid.sum() < 2:
+                    continue
+                if not np.all(valid):
+                    valid_idx = np.where(valid)[0]
+                    lo, hi = valid_idx[0], valid_idx[-1]
+                    nan_idx = np.where(~valid)[0]
+                    interior_nans = nan_idx[(nan_idx > lo) & (nan_idx < hi)]
+                    if len(interior_nans) > 0:
+                        nearest = valid_idx[
+                            np.argmin(
+                                np.abs(interior_nans[:, None] - valid_idx[None, :]), axis=1
+                            )
+                        ]
+                        col_vals[interior_nans] = col_vals[nearest]
+                    grid[:, age_index, feh_index] = col_vals
 
     interpolators = {
         band: RegularGridInterpolator(
@@ -99,10 +142,6 @@ def _build_interpolators(age_grid=None, feh_grid=None, mass_points=200):
         )
         for band in _ACTIVE_BANDS
     }
-
-    # print("mass range:", mass_grid[0], mass_grid[-1])
-    # print("age range:", age_grid[0], age_grid[-1])
-    # print("feh range:", feh_grid[0], feh_grid[-1])
 
     return interpolators, (mass_grid, age_grid, feh_grid)
 
@@ -115,12 +154,34 @@ def _get_interpolators():
 
 
 def get_model_mag(mass, age, feh):
-    interpolators, _ = _get_interpolators()
+    """
+    Parameters
+    ----------
+    mass : float or array
+        Stellar mass in solar masses.
+    age : float or array
+        Stellar age in years (e.g. 10e6 for 10 Myr, 3e9 for 3 Gyr).
+    feh : float or array
+        Metallicity [Fe/H] in dex.
 
-    mass_arr = np.asarray(mass)
-    age_arr = np.asarray(age)
-    feh_arr = np.asarray(feh)
+    Returns
+    -------
+    dict mapping band name -> absolute magnitude (float or array)
+    """
+
+    interpolators, (mass_grid, age_grid, feh_grid) = _get_interpolators()
+
+    mass_arr = np.asarray(mass, dtype=float)
+    age_arr  = np.asarray(age,  dtype=float)
+    feh_arr  = np.asarray(feh,  dtype=float)
     mass_arr, age_arr, feh_arr = np.broadcast_arrays(mass_arr, age_arr, feh_arr)
+
+    if np.any(mass_arr < mass_grid[0]) or np.any(mass_arr > mass_grid[-1]):
+        print(f"Warning: mass {mass} outside grid [{mass_grid[0]:.2f}, {mass_grid[-1]:.2f}] Msun")
+    if np.any(age_arr < age_grid[0]) or np.any(age_arr > age_grid[-1]):
+        print(f"Warning: age {age:.3e} outside grid [{age_grid[0]:.3e}, {age_grid[-1]:.3e}] yr")
+    if np.any(feh_arr < feh_grid[0]) or np.any(feh_arr > feh_grid[-1]):
+        print(f"Warning: feh {feh} outside grid [{feh_grid[0]:.2f}, {feh_grid[-1]:.2f}]")
 
     points = np.column_stack([mass_arr.ravel(), age_arr.ravel(), feh_arr.ravel()])
 
@@ -128,9 +189,8 @@ def get_model_mag(mass, age, feh):
     for band, interp in interpolators.items():
         outputs[band] = interp(points).reshape(mass_arr.shape)
 
-
     if mass_arr.shape == ():
-        return {b: outputs[b].item() for b in outputs}
+        return {b: float(outputs[b]) for b in outputs}
 
     return outputs
 
@@ -205,3 +265,110 @@ def brute_force_likelihood(observed_mags, observed_errs):
 # print("mass:", mass)
 # print("age:", age)
 # print("feh:", feh)
+
+
+
+
+
+#-------------------------
+#Code for grabbing a single isochrone rather than building a grid
+#-------------------------
+
+# import numpy as np
+# from isochrones import get_ichrone
+#
+# _REQUESTED_BANDS = ("G", "BP", "RP", "J", "H", "K", "W1", "W2", "W3", "W4", "g", "r", "i", "z")
+#
+# _BAND_COLUMNS = {
+#     "G": "G_mag", "BP": "BP_mag", "RP": "RP_mag",
+#     "J": "J_mag", "H": "H_mag", "K": "K_mag",
+#     "W1": "W1_mag", "W2": "W2_mag", "W3": "W3_mag", "W4": "W4_mag",
+#     "g": "g_mag", "r": "r_mag", "i": "i_mag", "z": "z_mag",
+# }
+#
+# _MIST = None
+#
+#
+# def _get_mist():
+#     global _MIST
+#     if _MIST is None:
+#         _MIST = get_ichrone("mist", bands=list(_REQUESTED_BANDS))
+#         _MIST.initialize()
+#     return _MIST
+#
+#
+# def _select_rows(iso):
+#     """
+#     Keep pre-MS (phase=-1), MS (phase=0), and early subgiant (phase=2)
+#     rows, truncated at the first point where mass turns over.
+#     """
+#     selected = iso[iso["phase"].isin([-1, 0, 2])].copy()
+#     selected = selected.sort_values("eep").reset_index(drop=True)
+#     masses = selected["mass"].to_numpy()
+#     cutoff = len(masses)
+#     for i in range(1, len(masses)):
+#         if masses[i] < masses[i - 1]:
+#             cutoff = i
+#             break
+#     return selected.iloc[:cutoff]
+#
+#
+# def get_model_mag(mass, age, feh):
+#     """
+#     Parameters
+#     ----------
+#     mass : float
+#         Stellar mass in solar masses.
+#     age : float
+#         Stellar age in years (e.g. 10e6 for 10 Myr, 3e9 for 3 Gyr).
+#     feh : float
+#         Metallicity [Fe/H] in dex.
+#
+#     Returns
+#     -------
+#     dict mapping band name -> absolute magnitude (float)
+#     """
+#     mist = _get_mist()
+#
+#     # Fetch the single isochrone at this age and metallicity
+#     iso = mist.isochrone(age=np.log10(age), feh=feh)
+#     selected = _select_rows(iso)
+#
+#     if len(selected) < 2:
+#         return {b: np.nan for b in _BAND_COLUMNS}
+#
+#     masses = selected["mass"].to_numpy()
+#     sort_idx = np.argsort(masses)
+#     masses_sorted = masses[sort_idx]
+#
+#     # Deduplicate
+#     _, unique_idx = np.unique(masses_sorted, return_index=True)
+#     masses_sorted = masses_sorted[unique_idx]
+#
+#     if mass < masses_sorted[0] or mass > masses_sorted[-1] + 0.1:
+#         print(f"Warning: mass {mass} outside isochrone range "
+#               f"[{masses_sorted[0]:.3f}, {masses_sorted[-1]:.3f}] Msun for "
+#               f"age={age:.3e}, feh={feh:.2f}")
+#
+#     results = {}
+#     for band, col in _BAND_COLUMNS.items():
+#         if col not in selected.columns:
+#             results[band] = np.nan
+#             continue
+#
+#         values = selected[col].to_numpy()[sort_idx][unique_idx]
+#
+#         if mass <= masses_sorted[-1]:
+#             # Standard interpolation within the isochrone mass range
+#             results[band] = float(np.interp(mass, masses_sorted, values,
+#                                             left=np.nan, right=np.nan))
+#         elif mass <= masses_sorted[-1] + 0.1:
+#             # Linear extrapolation up to 0.1 Msun beyond the upper boundary
+#             dm = masses_sorted[-1] - masses_sorted[-2]
+#             dv = values[-1] - values[-2]
+#             slope = dv / dm if dm != 0 else 0.0
+#             results[band] = float(values[-1] + slope * (mass - masses_sorted[-1]))
+#         else:
+#             results[band] = np.nan
+#
+#     return results

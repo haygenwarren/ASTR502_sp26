@@ -6,9 +6,9 @@ from the_interpolator import get_model_mag, brute_force_likelihood
 # mass, age, feh = brute_force_likelihood(observed_mags, observed_errs)
 # print(f"Brute-force likelihood results: mass={mass}, age={age}, feh={feh}")
 
-mass = 0.56
-age = 9300000
-feh = 0
+mass = 1.06
+age = 930000000
+feh = 0.14
 
 model_mags = get_model_mag(mass, age, feh)
 print("Model magnitudes at best-fit parameters:", model_mags)
