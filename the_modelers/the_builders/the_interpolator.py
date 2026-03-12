@@ -171,10 +171,12 @@ def _get_band_extinction(av, rv=3.1, extinction_model="mwavg"):
         if lam is None:
             ext[band] = 0.0
             continue
-        trans = curve.extinguish(lam * u.AA)
+
+        trans = curve(lam * u.AA)
         trans_val = float(np.atleast_1d(trans.value)[0])
         trans_val = np.clip(trans_val, 1e-12, 1.0)
         ext[band] = -2.5 * np.log10(trans_val)
+
     return ext
 
 
