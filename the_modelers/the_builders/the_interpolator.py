@@ -1,6 +1,12 @@
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 from isochrones import get_ichrone
+import astropy.units as u
+
+try:
+    from synphot.reddening import ReddeningLaw
+except ImportError:
+    ReddeningLaw = None
 
 _REQUESTED_BANDS = ("G", "BP", "RP", "J", "H", "K", "W1", "W2", "W3", "W4", "g", "r", "i", "z")
 
@@ -15,6 +21,23 @@ _MIST = None
 _INTERPOLATORS = None
 _GRIDS = None
 _ACTIVE_BANDS = None
+
+_BAND_EFFECTIVE_WAVELENGTH_ANGSTROM = {
+    "G": 6730.0,
+    "BP": 5320.0,
+    "RP": 7970.0,
+    "J": 12350.0,
+    "H": 16620.0,
+    "K": 21590.0,
+    "W1": 33526.0,
+    "W2": 46028.0,
+    "W3": 115608.0,
+    "W4": 220883.0,
+    "g": 4770.0,
+    "r": 6231.0,
+    "i": 7625.0,
+    "z": 9134.0,
+}
 
 
 def _get_mist():
@@ -126,7 +149,38 @@ def _get_interpolators():
     return _INTERPOLATORS, _GRIDS
 
 
-def get_model_mag(mass, age, feh):
+def _get_band_extinction(av, rv=3.1, extinction_model="mwavg"):
+    """
+    Compute A_lambda (mag) for each supported band using synphot.
+    """
+    if av <= 0:
+        return {b: 0.0 for b in _ACTIVE_BANDS}
+
+    if ReddeningLaw is None:
+        raise ImportError(
+            "synphot is required for extinction support. Install it with `pip install synphot`."
+        )
+
+    law = ReddeningLaw.from_extinction_model(extinction_model)
+    ebv = av / rv
+    curve = law.extinction_curve(ebv)
+
+    ext = {}
+    for band in _ACTIVE_BANDS:
+        lam = _BAND_EFFECTIVE_WAVELENGTH_ANGSTROM.get(band)
+        if lam is None:
+            ext[band] = 0.0
+            continue
+
+        trans = curve(lam * u.AA)
+        trans_val = float(np.atleast_1d(trans.value)[0])
+        trans_val = np.clip(trans_val, 1e-12, 1.0)
+        ext[band] = -2.5 * np.log10(trans_val)
+
+    return ext
+
+
+def get_model_mag(mass, age, feh, av=0.0, rv=3.1, extinction_model="mwavg"):
     """
     Parameters
     ----------
@@ -136,6 +190,8 @@ def get_model_mag(mass, age, feh):
         Stellar age in years (e.g. 10e6 for 10 Myr, 3e9 for 3 Gyr).
     feh : float or array
         Metallicity [Fe/H] in dex.
+    av : float
+        V-band extinction in magnitudes.
 
     Returns
     -------
@@ -159,8 +215,9 @@ def get_model_mag(mass, age, feh):
     points = np.column_stack([mass_arr.ravel(), age_arr.ravel(), feh_arr.ravel()])
 
     outputs = {}
+    extinction_by_band = _get_band_extinction(av, rv=rv, extinction_model=extinction_model)
     for band, interp in interpolators.items():
-        outputs[band] = interp(points).reshape(mass_arr.shape)
+        outputs[band] = interp(points).reshape(mass_arr.shape) + extinction_by_band.get(band, 0.0)
 
     if mass_arr.shape == ():
         return {b: float(outputs[b]) for b in outputs}
@@ -269,12 +326,12 @@ def _get_param_prior(hostname, fallback_sigma=0.25):
         "sig_age_hi": sig_age_hi, "sig_age_lo": sig_age_lo
     }
 
-def _chi2_phot(mass, log10_age, feh, obs_abs, sigma_phot=0.5):
+def _chi2_phot(mass, log10_age, feh, av, obs_abs, sigma_phot=0.5):
     """
     Fixed per-band magnitude tolerance sigma_phot (mag).
     """
     age_yr = 10.0 ** log10_age
-    model = get_model_mag(mass=mass, age=age_yr, feh=feh)
+    model = get_model_mag(mass=mass, age=age_yr, feh=feh, av=av)
 
     chi2 = 0.0
     n = 0
@@ -318,10 +375,11 @@ def _chi2_prior(mass, log10_age, feh, prior):
 def fit_best_params(hostname,
                     sigma_phot=0.5,
                     fallback_sigma_param=0.25,
+                    av_bounds=(0.0, 3.0),
                     bounds=None,
                     verbose=True):
     """
-    Returns best-fit (mass, age_yr, feh) using:
+    Returns best-fit (mass, age_yr, feh, av) using:
       chi2_total = chi2_phot + chi2_prior
 
     sigma_phot: fixed per-band photometric uncertainty (mag)
@@ -334,27 +392,28 @@ def fit_best_params(hostname,
     m0 = prior["m0"] if np.isfinite(prior["m0"]) else 1.0
     a0 = prior["a0_gyr"] if np.isfinite(prior["a0_gyr"]) else 5.0
     feh0 = prior["feh0"] if np.isfinite(prior["feh0"]) else 0.0
-    x0 = np.array([m0, np.log10(a0 * 1e9), feh0], dtype=float)
+    x0 = np.array([m0, np.log10(a0 * 1e9), feh0, 0.0], dtype=float)
 
-    # Bounds: (mass, log10_age_yr, feh)
+    # Bounds: (mass, log10_age_yr, feh, av)
     if bounds is None:
         bounds = [
             (0.1, 3.0),
             (6.0, np.log10(13.8e9)),
             (-1.0, 0.5),
+            av_bounds,
         ]
 
     def obj(x):
-        mass, log10_age, feh = x
+        mass, log10_age, feh, av = x
         # quick physical guards
-        if mass <= 0:
+        if mass <= 0 or av < 0:
             return 1e30
-        return (_chi2_phot(mass, log10_age, feh, obs_abs, sigma_phot=sigma_phot)
+        return (_chi2_phot(mass, log10_age, feh, av, obs_abs, sigma_phot=sigma_phot)
                 + _chi2_prior(mass, log10_age, feh, prior))
 
     res = minimize(obj, x0=x0, bounds=bounds, method="L-BFGS-B")
 
-    mass_b, log10_age_b, feh_b = res.x
+    mass_b, log10_age_b, feh_b, av_b = res.x
     age_yr_b = 10.0 ** log10_age_b
     age_gyr_b = age_yr_b / 1e9
 
@@ -363,32 +422,37 @@ def fit_best_params(hostname,
         print(f"  mass = {mass_b:.4f} Msun")
         print(f"  age  = {age_yr_b:.3e} yr  ({age_gyr_b:.4f} Gyr)")
         print(f"  feh  = {feh_b:.4f} dex")
+        print(f"  Av   = {av_b:.4f} mag")
         print(f"  success = {res.success} | {res.message}")
         print(f"  chi2_total = {res.fun:.2f} | N_obs_bands = {len(obs_abs)}")
         print(f"  d_pc used = {d_pc:.3f}")
 
-    return mass_b, age_yr_b, feh_b, res
+    return mass_b, age_yr_b, feh_b, av_b, res
 
 def get_bestfit_model_mag_for_star(hostname,
                                   sigma_phot=0.5,
                                   fallback_sigma_param=0.25,
+                                  av_bounds=(0.0, 3.0),
                                   bounds=None,
                                   verbose=True):
     """
     One-stop call:
-      - finds best-fit mass/age/feh for hostname
+      - finds best-fit mass/age/feh/Av for hostname
       - prints best-fit params
       - returns (best_params, model_mags_at_bestfit)
     """
-    m, a_yr, feh, res = fit_best_params(
+    m, a_yr, feh, av, res = fit_best_params(
         hostname,
         sigma_phot=sigma_phot,
         fallback_sigma_param=fallback_sigma_param,
+        av_bounds=av_bounds,
         bounds=bounds,
         verbose=verbose
     )
-    mags = get_model_mag(mass=m, age=a_yr, feh=feh)
-    return (m, a_yr, feh), mags
+    mags = get_model_mag(mass=m, age=a_yr, feh=feh, av=av)
+    if verbose:
+        print(f"  get_bestfit_model_mag_for_star -> best-fit Av = {av:.4f} mag")
+    return (m, a_yr, feh, av), mags
 
 # # Example usage
 # print("Results from interpolator and get_model_mag:")
