@@ -418,7 +418,7 @@ def fit_best_params(hostname,
                     bounds=None,
                     run_emcee=True,
                     nwalkers=32,
-                    nsteps=1200,
+                    nsteps=5000,
                     burn_in=300,
                     random_seed=42,
                     verbose=True):
@@ -486,9 +486,11 @@ def fit_best_params(hostname,
         print(f"  age  = {age_yr_b:.3e} yr  ({age_gyr_b:.4f} Gyr)")
         print(f"  feh  = {feh_b:.4f} dex")
         print(f"  Av   = {av_b:.4f} mag")
+        print("-------------------------------------------")
         print(f"  success = {res.success} | {res.message}")
         print(f"  chi2_total = {res.fun:.2f} | N_obs_bands = {len(obs_abs)}")
         print(f"  d_pc used = {d_pc:.3f}")
+        print("-------------------------------------------")
         if mcmc_summary is not None:
             age_med_yr = 10.0 ** mcmc_summary["log10_age"]["median"]
             age_err_minus_yr = age_med_yr - 10.0 ** (
@@ -509,6 +511,7 @@ def fit_best_params(hostname,
                 f"    feh  = {feh_b:.4f} -{mcmc_summary['feh']['err_minus']:.4f}"
                 f"/+{mcmc_summary['feh']['err_plus']:.4f} dex"
             )
+        print("-------------------------------------------")
 
     res.mcmc_summary = mcmc_summary
     return mass_b, age_yr_b, feh_b, av_b, res
@@ -534,8 +537,6 @@ def get_bestfit_model_mag_for_star(hostname,
         verbose=verbose
     )
     mags = get_model_mag(mass=m, age=a_yr, feh=feh, av=av)
-    if verbose:
-        print(f"  get_bestfit_model_mag_for_star -> best-fit Av = {av:.4f} mag")
     return (m, a_yr, feh, av), mags
 
 # # Example usage
