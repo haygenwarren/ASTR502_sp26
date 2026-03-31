@@ -9,7 +9,7 @@ load_catalogs(
 # print(f"Brute-force likelihood results: mass={mass}, age={age}, feh={feh}")
 
 (best_params, mags) = get_bestfit_model_mag_for_star(
-    "TOI-2497",
+    "HAT-P-19",
     sigma_phot=0.5,
     fallback_sigma_param=0.1,
     verbose=True
