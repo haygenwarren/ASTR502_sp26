@@ -497,7 +497,7 @@ def fit_best_params(hostname,
                     bounds=None,
                     run_emcee=True,
                     nwalkers=32,
-                    nsteps=5000,
+                    nsteps=10000,
                     burn_in=300,
                     random_seed=42,
                     make_walker_plots=True,
@@ -517,7 +517,18 @@ def fit_best_params(hostname,
     m0 = prior["m0"] if np.isfinite(prior["m0"]) else 1.0
     a0 = prior["a0_gyr"] if np.isfinite(prior["a0_gyr"]) else 5.0
     feh0 = prior["feh0"] if np.isfinite(prior["feh0"]) else 0.0
-    x0 = np.array([m0, np.log10(a0 * 1e9), feh0, 0.0], dtype=float)
+
+    mass_offset = 0
+    age_offset_gyr = 0
+    feh_offset = 0
+    av0 = 0
+
+    x0 = np.array([
+        m0 + mass_offset,
+        np.log10((a0 + age_offset_gyr) * 1e9),
+        feh0 + feh_offset,
+        av0
+    ], dtype=float)
 
     # Bounds: (mass, log10_age_yr, feh, av)
     if bounds is None:
