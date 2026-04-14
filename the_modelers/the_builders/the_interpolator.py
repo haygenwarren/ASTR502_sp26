@@ -2,6 +2,8 @@ import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 from isochrones import get_ichrone
 import astropy.units as u
+import emcee
+import matplotlib.pyplot as plt
 
 try:
     from synphot.reddening import ReddeningLaw
@@ -372,11 +374,133 @@ def _chi2_prior(mass, log10_age, feh, prior):
 
     return chi2
 
+
+def _make_log_probability(obs_abs, prior, sigma_phot, bounds):
+    (mass_min, mass_max), (logage_min, logage_max), (feh_min, feh_max), (av_min, av_max) = bounds
+
+    def log_prob(theta):
+        mass, log10_age, feh, av = theta
+        in_bounds = (
+            (mass_min <= mass <= mass_max)
+            and (logage_min <= log10_age <= logage_max)
+            and (feh_min <= feh <= feh_max)
+            and (av_min <= av <= av_max)
+        )
+        if not in_bounds:
+            return -np.inf
+
+        chi2 = (
+            _chi2_phot(mass, log10_age, feh, av, obs_abs, sigma_phot=sigma_phot)
+            + _chi2_prior(mass, log10_age, feh, prior)
+        )
+        return -0.5 * chi2 if np.isfinite(chi2) else -np.inf
+
+    return log_prob
+
+
+def _compute_param_errors(samples):
+    """
+    Return median and 16th/84th-percentile errors for sampled parameters.
+    """
+    percentiles = np.percentile(samples, [16, 50, 84], axis=0)
+    p16, p50, p84 = percentiles
+    return {
+        "mass": {"median": p50[0], "err_minus": p50[0] - p16[0], "err_plus": p84[0] - p50[0]},
+        "log10_age": {"median": p50[1], "err_minus": p50[1] - p16[1], "err_plus": p84[1] - p50[1]},
+        "feh": {"median": p50[2], "err_minus": p50[2] - p16[2], "err_plus": p84[2] - p50[2]},
+        "av": {"median": p50[3], "err_minus": p50[3] - p16[3], "err_plus": p84[3] - p50[3]},
+    }
+
+
+def _build_walker_error_plots(chain, burn_in=300, hostname=None, min_samples=200, step_stride=10):
+    """
+    Build three walker plots showing how 1σ emcee errors evolve with iteration
+    for mass, age, and metallicity.
+
+    Parameters
+    ----------
+    chain : ndarray
+        emcee chain with shape (nsteps, nwalkers, ndim).
+    burn_in : int
+        Number of initial steps to discard.
+    hostname : str or None
+        Optional name used in plot titles.
+    min_samples : int
+        Minimum number of post-burn samples required before computing errors.
+    step_stride : int
+        Use every Nth step for error evolution curves to keep plotting fast.
+    """
+    if chain is None or chain.ndim != 3:
+        return {}
+
+    nsteps, _, ndim = chain.shape
+    if ndim < 3:
+        return {}
+
+    start = int(max(0, burn_in))
+    if nsteps - start < 2:
+        return {}
+
+    param_specs = [
+        ("mass", 0, r"Mass Error (M$_\odot$)"),
+        ("age", 1, "Age Error (yr)"),
+        ("feh", 2, "Metallicity Error (dex)"),
+    ]
+    title_prefix = f"{hostname} - " if hostname else ""
+
+    plots = {}
+    for key, pidx, ylabel in param_specs:
+        xvals = []
+        err_minus_vals = []
+        err_plus_vals = []
+
+        for end_step in range(start + 1, nsteps + 1, max(1, int(step_stride))):
+            running = chain[start:end_step, :, pidx].reshape(-1)
+            if running.size < min_samples:
+                continue
+
+            p16, p50, p84 = np.percentile(running, [16, 50, 84])
+            if key == "age":
+                median_lin = 10.0 ** p50
+                err_minus = median_lin - 10.0 ** p16
+                err_plus = 10.0 ** p84 - median_lin
+            else:
+                err_minus = p50 - p16
+                err_plus = p84 - p50
+
+            xvals.append(end_step)
+            err_minus_vals.append(err_minus)
+            err_plus_vals.append(err_plus)
+
+        if len(xvals) == 0:
+            continue
+
+        fig, ax = plt.subplots(figsize=(7.0, 4.0))
+        ax.plot(xvals, err_minus_vals, label=r"$-\sigma$ (50th-16th)", lw=1.8)
+        ax.plot(xvals, err_plus_vals, label=r"$+\sigma$ (84th-50th)", lw=1.8)
+        ax.set_xlabel("Iteration")
+        ax.set_ylabel(ylabel)
+        ax.set_title(f"{title_prefix}{key} error evolution")
+        ax.grid(alpha=0.3)
+        ax.legend()
+        fig.tight_layout()
+
+        plots[key] = fig
+
+    return plots
+
+
 def fit_best_params(hostname,
                     sigma_phot=0.5,
                     fallback_sigma_param=0.25,
                     av_bounds=(0.0, 3.0),
                     bounds=None,
+                    run_emcee=True,
+                    nwalkers=32,
+                    nsteps=10000,
+                    burn_in=300,
+                    random_seed=42,
+                    make_walker_plots=True,
                     verbose=True):
     """
     Returns best-fit (mass, age_yr, feh, av) using:
@@ -384,6 +508,7 @@ def fit_best_params(hostname,
 
     sigma_phot: fixed per-band photometric uncertainty (mag)
     fallback_sigma_param: ± error used for mass & feh (and age if missing) when Mega doesn't provide errors
+    run_emcee: sample posterior with emcee to estimate parameter uncertainties
     """
     obs_abs, d_pc = _get_star_obs_abs(hostname)
     prior = _get_param_prior(hostname, fallback_sigma=fallback_sigma_param)
@@ -392,7 +517,18 @@ def fit_best_params(hostname,
     m0 = prior["m0"] if np.isfinite(prior["m0"]) else 1.0
     a0 = prior["a0_gyr"] if np.isfinite(prior["a0_gyr"]) else 5.0
     feh0 = prior["feh0"] if np.isfinite(prior["feh0"]) else 0.0
-    x0 = np.array([m0, np.log10(a0 * 1e9), feh0, 0.0], dtype=float)
+
+    mass_offset = 0
+    age_offset_gyr = 0
+    feh_offset = 0
+    av0 = 0
+
+    x0 = np.array([
+        m0 + mass_offset,
+        np.log10((a0 + age_offset_gyr) * 1e9),
+        feh0 + feh_offset,
+        av0
+    ], dtype=float)
 
     # Bounds: (mass, log10_age_yr, feh, av)
     if bounds is None:
@@ -416,6 +552,32 @@ def fit_best_params(hostname,
     mass_b, log10_age_b, feh_b, av_b = res.x
     age_yr_b = 10.0 ** log10_age_b
     age_gyr_b = age_yr_b / 1e9
+    mcmc_summary = None
+    walker_plots = {}
+
+    if run_emcee:
+        rng = np.random.default_rng(random_seed)
+        ndim = 4
+        log_prob = _make_log_probability(obs_abs, prior, sigma_phot, bounds)
+
+        # Initialize walkers near the optimizer solution
+        p0 = res.x + 1e-3 * rng.normal(size=(nwalkers, ndim))
+        for i, (low, high) in enumerate(bounds):
+            p0[:, i] = np.clip(p0[:, i], low + 1e-8, high - 1e-8)
+
+        sampler = emcee.EnsembleSampler(nwalkers, ndim, log_prob)
+        sampler.run_mcmc(p0, nsteps, progress=False)
+
+        flat_samples = sampler.get_chain(discard=burn_in, flat=True)
+        if flat_samples.shape[0] > 0:
+            mcmc_summary = _compute_param_errors(flat_samples)
+            if make_walker_plots:
+                chain = sampler.get_chain()
+                walker_plots = _build_walker_error_plots(
+                    chain=chain,
+                    burn_in=burn_in,
+                    hostname=hostname
+                )
 
     if verbose:
         print(f"\n[{hostname}] Best-fit parameters (chi2_phot + chi2_prior)")
@@ -423,10 +585,35 @@ def fit_best_params(hostname,
         print(f"  age  = {age_yr_b:.3e} yr  ({age_gyr_b:.4f} Gyr)")
         print(f"  feh  = {feh_b:.4f} dex")
         print(f"  Av   = {av_b:.4f} mag")
+        print("-------------------------------------------")
         print(f"  success = {res.success} | {res.message}")
         print(f"  chi2_total = {res.fun:.2f} | N_obs_bands = {len(obs_abs)}")
         print(f"  d_pc used = {d_pc:.3f}")
+        print("-------------------------------------------")
+        if mcmc_summary is not None:
+            age_med_yr = 10.0 ** mcmc_summary["log10_age"]["median"]
+            age_err_minus_yr = age_med_yr - 10.0 ** (
+                mcmc_summary["log10_age"]["median"] - mcmc_summary["log10_age"]["err_minus"]
+            )
+            age_err_plus_yr = 10.0 ** (
+                mcmc_summary["log10_age"]["median"] + mcmc_summary["log10_age"]["err_plus"]
+            ) - age_med_yr
+            print("  emcee 1σ parameter uncertainties (16th/50th/84th percentiles):")
+            print(
+                f"    mass = {mass_b:.4f} -{mcmc_summary['mass']['err_minus']:.4f}"
+                f"/+{mcmc_summary['mass']['err_plus']:.4f} Msun"
+            )
+            print(
+                f"    age  = {age_yr_b:.3e} -{age_err_minus_yr:.3e}/+{age_err_plus_yr:.3e} yr"
+            )
+            print(
+                f"    feh  = {feh_b:.4f} -{mcmc_summary['feh']['err_minus']:.4f}"
+                f"/+{mcmc_summary['feh']['err_plus']:.4f} dex"
+            )
+        print("-------------------------------------------")
 
+    res.mcmc_summary = mcmc_summary
+    res.walker_plots = walker_plots
     return mass_b, age_yr_b, feh_b, av_b, res
 
 def get_bestfit_model_mag_for_star(hostname,
@@ -434,6 +621,7 @@ def get_bestfit_model_mag_for_star(hostname,
                                   fallback_sigma_param=0.25,
                                   av_bounds=(0.0, 3.0),
                                   bounds=None,
+                                  make_walker_plots=True,
                                   verbose=True):
     """
     One-stop call:
@@ -447,12 +635,11 @@ def get_bestfit_model_mag_for_star(hostname,
         fallback_sigma_param=fallback_sigma_param,
         av_bounds=av_bounds,
         bounds=bounds,
+        make_walker_plots=make_walker_plots,
         verbose=verbose
     )
     mags = get_model_mag(mass=m, age=a_yr, feh=feh, av=av)
-    if verbose:
-        print(f"  get_bestfit_model_mag_for_star -> best-fit Av = {av:.4f} mag")
-    return (m, a_yr, feh, av), mags
+    return (m, a_yr, feh, av), mags, res.walker_plots
 
 # # Example usage
 # print("Results from interpolator and get_model_mag:")
