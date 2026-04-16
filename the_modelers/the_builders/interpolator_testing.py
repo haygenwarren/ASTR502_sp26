@@ -222,6 +222,12 @@ def run_stars(
 
     results_df = pd.DataFrame(rows)
     results_csv = out_dir / "interpolator_results.csv"
+    if results_csv.exists():
+        old_df = pd.read_csv(results_csv)
+        results_df = pd.concat([old_df, results_df], ignore_index=True)
+
+        # optional: remove duplicates by hostname
+        results_df = results_df.drop_duplicates(subset="hostname", keep="last")
     results_df.to_csv(results_csv, index=False)
 
     make_parameter_comparison_plot(results_df, out_dir / "parameter_comparison.png")
@@ -233,19 +239,13 @@ def run_stars(
 
     return results_df
 
-
 if __name__ == "__main__":
     repo_root = Path(__file__).resolve().parents[2]
     mega_csv = repo_root / "ASTR502_Mega_Target_List.csv"
     phot_csv = repo_root / "ASTR502_Master_Photometry_List.csv"
     out_dir = Path(__file__).resolve().parent / "interpolator_outputs"
 
-    # Option A: explicitly name stars to run
     stars_to_run = ["K2-33", "KELT-9", "TOI-2497"]
-
-    # Option B: auto-select youngest stars from Mega list
-    # mega_df = pd.read_csv(mega_csv)
-    # stars_to_run = get_youngest_stars(mega_df, n_stars=10)
 
     run_stars(
         star_names=stars_to_run,
@@ -255,6 +255,6 @@ if __name__ == "__main__":
         sigma_phot=0.5,
         fallback_sigma_param=0.1,
         nwalkers=32,
-        nsteps=4000,
+        nsteps=5000,
         burn_in=300,
     )

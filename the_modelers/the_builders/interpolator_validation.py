@@ -9,14 +9,14 @@ load_catalogs(
 # mass, age, feh = brute_force_likelihood(observed_mags, observed_errs)
 # print(f"Brute-force likelihood results: mass={mass}, age={age}, feh={feh}")
 
-(best_params, mags, walker_plots) = get_bestfit_model_mag_for_star(
+(best_params, mags) = get_bestfit_model_mag_for_star(
     "TOI-2497",
     sigma_phot=0.5,
     fallback_sigma_param=0.1,
     verbose=True
 )
-for fig in walker_plots.values():
-    fig.show()
-plt.show()
+# for fig in walker_plots.values():
+#     fig.show()
+# plt.show()
 print("Best params:", best_params)
 print("Model mags:", mags)
