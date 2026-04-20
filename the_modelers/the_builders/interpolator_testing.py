@@ -28,8 +28,8 @@ def run_stars(
         burn_in=burn_in,
     )
 
-    age_plot = out_dir / "age_comparison.png"
-    make_age_comparison_plot_from_csv(results_csv=results_csv, out_path=age_plot)
+    # age_plot = out_dir / "age_comparison.png"
+    # make_age_comparison_plot_from_csv(results_csv=results_csv, out_path=age_plot)
 
 
 if __name__ == "__main__":
@@ -38,7 +38,12 @@ if __name__ == "__main__":
     phot_csv = repo_root / "ASTR502_Master_Photometry_List.csv"
     out_dir = Path(__file__).resolve().parent / "interpolator_outputs"
 
-    stars_to_run = ["K2-33", "KELT-9", "TOI-2497"]
+    stars_to_run = ["HIP 94235", "TOI-451", "K2-284", "TOI-1860", "Qatar-4",
+                    "TOI-251", "TOI-815", "Kepler-529", "KOI-1783", "Kepler-1733",
+                    "TOI-1224", "TOI-2076", "Kepler-63", "Kepler-411", "Kepler-279",
+                    "Kepler-1903", "Kepler-1764", "TOI-1268", "HD 110082", "Kepler-394",
+                    "Kepler-59", "GPX-1", "Kepler-1762", "Kepler-265", "Kepler-216", "Kepler-31",
+                    "TOI-1431", "TOI-6016", "TOI-2048", "TOI-2266"]
 
     run_stars(
         star_names=stars_to_run,
