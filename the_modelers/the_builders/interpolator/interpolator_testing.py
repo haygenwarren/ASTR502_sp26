@@ -2,7 +2,7 @@ from pathlib import Path
 import argparse
 
 from interpolator_plotting import make_age_comparison_plot_from_csv
-from interpolator_values import run_stars_and_save_values
+from the_modelers.the_builders.interpolator.interpolator_values import run_stars_and_save_values
 
 
 def run_stars(

@@ -4,7 +4,7 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
-from the_interpolator import fit_best_params, get_model_mag, load_catalogs
+from the_modelers.the_builders.interpolator.the_interpolator import fit_best_params, get_model_mag, load_catalogs
 
 # Observed photometry columns in ASTR502_Master_Photometry_List.csv
 OBS_MAP = {
