@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Iterable
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
 import numpy as np
 import pandas as pd
@@ -74,6 +75,74 @@ def build_row(hostname: str, mega_df: pd.DataFrame, phot_df: pd.DataFrame, fit_r
     return row
 
 
+def _run_fit_for_hostname(
+    hostname: str,
+    mega_csv: Path,
+    phot_csv: Path,
+    sigma_phot: float,
+    fallback_sigma_param: float,
+    nwalkers: int,
+    nsteps: int,
+    burn_in: int,
+) -> dict:
+    mega_df = pd.read_csv(mega_csv)
+    phot_df = pd.read_csv(phot_csv)
+    load_catalogs(str(mega_csv), str(phot_csv))
+
+    mass, age_yr, feh, av, res = fit_best_params(
+        hostname=hostname,
+        sigma_phot=sigma_phot,
+        fallback_sigma_param=fallback_sigma_param,
+        run_emcee=True,
+        nwalkers=nwalkers,
+        nsteps=nsteps,
+        burn_in=burn_in,
+        make_walker_plots=False,
+        verbose=True,
+    )
+
+    mcmc = res.mcmc_summary
+    if mcmc is not None:
+        mass_err_minus = mcmc["mass"]["err_minus"]
+        mass_err_plus = mcmc["mass"]["err_plus"]
+        feh_err_minus = mcmc["feh"]["err_minus"]
+        feh_err_plus = mcmc["feh"]["err_plus"]
+
+        age_med_log = mcmc["log10_age"]["median"]
+        age_err_minus_log = mcmc["log10_age"]["err_minus"]
+        age_err_plus_log = mcmc["log10_age"]["err_plus"]
+        age_med_yr = 10.0 ** age_med_log
+        age_err_minus = age_med_yr - 10.0 ** (age_med_log - age_err_minus_log)
+        age_err_plus = 10.0 ** (age_med_log + age_err_plus_log) - age_med_yr
+    else:
+        mass_err_minus = np.nan
+        mass_err_plus = np.nan
+        feh_err_minus = np.nan
+        feh_err_plus = np.nan
+        age_err_minus = np.nan
+        age_err_plus = np.nan
+
+    mags = get_model_mag(mass=mass, age=age_yr, feh=feh, av=av)
+    fit_result = {
+        "mass": mass,
+        "mass_err_minus": mass_err_minus,
+        "mass_err_plus": mass_err_plus,
+        "mass_err": np.nanmean([mass_err_minus, mass_err_plus]),
+        "age_yr": age_yr,
+        "age_yr_err_minus": age_err_minus,
+        "age_yr_err_plus": age_err_plus,
+        "age_yr_err": np.nanmean([age_err_minus, age_err_plus]),
+        "feh": feh,
+        "feh_err_minus": feh_err_minus,
+        "feh_err_plus": feh_err_plus,
+        "feh_err": np.nanmean([feh_err_minus, feh_err_plus]),
+        "av": av,
+        "chi2_total": res.fun,
+        "model_mags": mags,
+    }
+    return build_row(hostname, mega_df, phot_df, fit_result)
+
+
 def run_stars_and_save_values(
     star_names: Iterable[str],
     mega_csv: Path,
@@ -84,6 +153,8 @@ def run_stars_and_save_values(
     nwalkers: int = 32,
     nsteps: int = 4000,
     burn_in: int = 300,
+    backend: str = "serial",
+    max_workers: int | None = None,
 ) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -91,60 +162,53 @@ def run_stars_and_save_values(
     phot_df = pd.read_csv(phot_csv)
     load_catalogs(str(mega_csv), str(phot_csv))
 
-    rows = []
-    for hostname in star_names:
-        mass, age_yr, feh, av, res = fit_best_params(
-            hostname=hostname,
-            sigma_phot=sigma_phot,
-            fallback_sigma_param=fallback_sigma_param,
-            run_emcee=True,
-            nwalkers=nwalkers,
-            nsteps=nsteps,
-            burn_in=burn_in,
-            make_walker_plots=False,
-            verbose=True,
-        )
-
-        mcmc = res.mcmc_summary
-        if mcmc is not None:
-            mass_err_minus = mcmc["mass"]["err_minus"]
-            mass_err_plus = mcmc["mass"]["err_plus"]
-            feh_err_minus = mcmc["feh"]["err_minus"]
-            feh_err_plus = mcmc["feh"]["err_plus"]
-
-            age_med_log = mcmc["log10_age"]["median"]
-            age_err_minus_log = mcmc["log10_age"]["err_minus"]
-            age_err_plus_log = mcmc["log10_age"]["err_plus"]
-            age_med_yr = 10.0 ** age_med_log
-            age_err_minus = age_med_yr - 10.0 ** (age_med_log - age_err_minus_log)
-            age_err_plus = 10.0 ** (age_med_log + age_err_plus_log) - age_med_yr
-        else:
-            mass_err_minus = np.nan
-            mass_err_plus = np.nan
-            feh_err_minus = np.nan
-            feh_err_plus = np.nan
-            age_err_minus = np.nan
-            age_err_plus = np.nan
-
-        mags = get_model_mag(mass=mass, age=age_yr, feh=feh, av=av)
-        fit_result = {
-            "mass": mass,
-            "mass_err_minus": mass_err_minus,
-            "mass_err_plus": mass_err_plus,
-            "mass_err": np.nanmean([mass_err_minus, mass_err_plus]),
-            "age_yr": age_yr,
-            "age_yr_err_minus": age_err_minus,
-            "age_yr_err_plus": age_err_plus,
-            "age_yr_err": np.nanmean([age_err_minus, age_err_plus]),
-            "feh": feh,
-            "feh_err_minus": feh_err_minus,
-            "feh_err_plus": feh_err_plus,
-            "feh_err": np.nanmean([feh_err_minus, feh_err_plus]),
-            "av": av,
-            "chi2_total": res.fun,
-            "model_mags": mags,
-        }
-        rows.append(build_row(hostname, mega_df, phot_df, fit_result))
+    stars = list(star_names)
+    if backend == "parallel":
+        workers = max_workers if max_workers is not None else min(4, len(stars))
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            rows = list(
+                executor.map(
+                    _run_fit_for_hostname,
+                    stars,
+                    [mega_csv] * len(stars),
+                    [phot_csv] * len(stars),
+                    [sigma_phot] * len(stars),
+                    [fallback_sigma_param] * len(stars),
+                    [nwalkers] * len(stars),
+                    [nsteps] * len(stars),
+                    [burn_in] * len(stars),
+                )
+            )
+    elif backend == "process":
+        workers = max_workers if max_workers is not None else min(4, len(stars))
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            rows = list(
+                executor.map(
+                    _run_fit_for_hostname,
+                    stars,
+                    [mega_csv] * len(stars),
+                    [phot_csv] * len(stars),
+                    [sigma_phot] * len(stars),
+                    [fallback_sigma_param] * len(stars),
+                    [nwalkers] * len(stars),
+                    [nsteps] * len(stars),
+                    [burn_in] * len(stars),
+                )
+            )
+    else:
+        rows = [
+            _run_fit_for_hostname(
+                hostname=hostname,
+                mega_csv=mega_csv,
+                phot_csv=phot_csv,
+                sigma_phot=sigma_phot,
+                fallback_sigma_param=fallback_sigma_param,
+                nwalkers=nwalkers,
+                nsteps=nsteps,
+                burn_in=burn_in,
+            )
+            for hostname in stars
+        ]
 
     results_df = pd.DataFrame(rows)
     results_csv = out_dir / "interpolator_results.csv"
