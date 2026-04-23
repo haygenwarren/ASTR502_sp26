@@ -15,6 +15,8 @@ def run_stars(
     nwalkers: int = 32,
     nsteps: int = 4000,
     burn_in: int = 300,
+    backend: str = "serial",
+    max_workers: int | None = None,
 ):
     """Run interpolation for stars and save/update CSV values."""
     results_csv = run_stars_and_save_values(
@@ -27,6 +29,8 @@ def run_stars(
         nwalkers=nwalkers,
         nsteps=nsteps,
         burn_in=burn_in,
+        backend=backend,
+        max_workers=max_workers,
     )
 
     return results_csv
@@ -59,6 +63,18 @@ if __name__ == "__main__":
         default=None,
         help="Path to an existing results CSV to use when --plot is set.",
     )
+    parser.add_argument(
+        "--backend",
+        choices=["serial", "parallel", "process"],
+        default="serial",
+        help="Execution backend for star fitting when generating CSV.",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help="Worker count for --backend=parallel|process (default picks up to 4 workers).",
+    )
     args = parser.parse_args()
 
     run_generate_csv = args.generate_csv
@@ -89,6 +105,8 @@ if __name__ == "__main__":
             nwalkers=32,
             nsteps=5000,
             burn_in=300,
+            backend=args.backend,
+            max_workers=args.workers,
         )
 
     if run_plot:
