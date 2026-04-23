@@ -2,7 +2,7 @@ from pathlib import Path
 import argparse
 
 from interpolator_plotting import make_age_comparison_plot_from_csv
-from the_modelers.the_builders.interpolator_code.interpolator_values import run_stars_and_save_values
+from interpolator_values import run_stars_and_save_values
 
 
 def run_stars(
@@ -69,12 +69,12 @@ if __name__ == "__main__":
         run_generate_csv = True
         run_plot = True
 
-    repo_root = Path(__file__).resolve().parents[2]
+    repo_root = Path(__file__).resolve().parents[3]
     mega_csv = repo_root / "ASTR502_Mega_Target_List.csv"
     phot_csv = repo_root / "ASTR502_Master_Photometry_List.csv"
-    out_dir = Path(__file__).resolve().parent / "interpolator_outputs"
+    out_dir = Path(__file__).resolve().parents[1] / "interpolator_outputs"
 
-    stars_to_run = ["Kepler-254"]
+    stars_to_run = ["HATS-55", "TOI-5027", "Kepler-1817", "Kepler-259", "Kepler-375"]
 
     results_csv = args.results_csv
 
