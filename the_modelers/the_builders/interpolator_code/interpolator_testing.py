@@ -1,7 +1,10 @@
 from pathlib import Path
 import argparse
 
-from interpolator_plotting import make_age_comparison_plot_from_csv
+from interpolator_plotting import (
+    make_age_comparison_plot_from_csv,
+    make_lee_comparison_plot_from_csv,
+)
 from interpolator_values import run_stars_and_save_values
 
 
@@ -43,6 +46,17 @@ def make_age_plot(results_csv: Path, out_dir: Path):
     return age_plot
 
 
+def make_lee_comparison_plot(results_csv: Path, lee_results_csv: Path, out_dir: Path):
+    """Generate a comparison plot between Lee's CSV output and interpolator output."""
+    lee_plot = out_dir / "lee_age_comparison.png"
+    make_lee_comparison_plot_from_csv(
+        results_csv=results_csv,
+        lee_results_csv=lee_results_csv,
+        out_path=lee_plot,
+    )
+    return lee_plot
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Generate interpolator CSV values and/or an age-comparison plot."
@@ -56,6 +70,11 @@ if __name__ == "__main__":
         "--plot",
         action="store_true",
         help="Generate the age plot from an existing results CSV.",
+    )
+    parser.add_argument(
+        "--plot-lee-comparison",
+        action="store_true",
+        help="Generate comparison plot of leeresults.csv vs results CSV.",
     )
     parser.add_argument(
         "--results-csv",
@@ -79,16 +98,19 @@ if __name__ == "__main__":
 
     run_generate_csv = args.generate_csv
     run_plot = args.plot
+    run_plot_lee = args.plot_lee_comparison
 
     # If neither flag is provided, run both for convenience.
-    if not run_generate_csv and not run_plot:
+    if not run_generate_csv and not run_plot and not run_plot_lee:
         run_generate_csv = True
         run_plot = True
+        run_plot_lee = True
 
     repo_root = Path(__file__).resolve().parents[3]
     mega_csv = repo_root / "ASTR502_Mega_Target_List.csv"
     phot_csv = repo_root / "ASTR502_Master_Photometry_List.csv"
     out_dir = Path(__file__).resolve().parents[1] / "interpolator_outputs"
+    lee_results_csv = Path(__file__).resolve().parents[1] / "leeresults.csv"
 
     stars_to_run = ["Kepler-261", "Kepler-140", "Kepler-1312", "Kepler-1725", "TOI-622",
                     "XO-1", "TrES-3", "Kepler-1885", "Kepler-1781", "Kepler-1881"]
@@ -116,3 +138,14 @@ if __name__ == "__main__":
                 "--plot requires a results CSV. Provide --results-csv or include --generate-csv."
             )
         make_age_plot(results_csv=results_csv, out_dir=out_dir)
+
+    if run_plot_lee:
+        if results_csv is None:
+            raise ValueError(
+                "--plot-lee-comparison requires a results CSV. Provide --results-csv or include --generate-csv."
+            )
+        make_lee_comparison_plot(
+            results_csv=results_csv,
+            lee_results_csv=lee_results_csv,
+            out_dir=out_dir,
+        )
