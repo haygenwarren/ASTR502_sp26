@@ -90,8 +90,8 @@ if __name__ == "__main__":
     phot_csv = repo_root / "ASTR502_Master_Photometry_List.csv"
     out_dir = Path(__file__).resolve().parents[1] / "interpolator_outputs"
 
-    stars_to_run = ["Kepler-1979", "Kepler-1811", "Kepler-1900", "Kepler-1828", "Kepler-1797",
-                    "Kepler-1322", "Kepler-358", "Kepler-276", "Kepler-1679", "Kepler-1839"]
+    stars_to_run = ["WASP-59", "HATS-67", "Kepler-198", "Kepler-198", "HD 207496",
+                    "Qatar-5", "KOI-351", "Kepler-349", "TOI-1135", "TOI-444"]
 
     results_csv = args.results_csv
 
